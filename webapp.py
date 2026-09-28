@@ -367,7 +367,22 @@ def _open_browser():
     webbrowser.open(f"http://{HOST}:{PORT}")
 
 
+def _port_busy() -> bool:
+    import socket
+    s = socket.socket()
+    try:
+        s.bind((HOST, PORT))
+        s.close()
+        return False
+    except OSError:
+        return True
+
+
 if __name__ == "__main__":
-    threading.Thread(target=_open_browser, daemon=True).start()
-    import uvicorn
-    uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
+    if _port_busy():
+        print(f"[Diting] already running at http://{HOST}:{PORT}, opening browser")
+        webbrowser.open(f"http://{HOST}:{PORT}")
+    else:
+        threading.Thread(target=_open_browser, daemon=True).start()
+        import uvicorn
+        uvicorn.run(app, host=HOST, port=PORT, log_level="warning")

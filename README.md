@@ -4,12 +4,16 @@
 
 ## 快速开始
 
+**Windows 一键使用**：双击 `start.bat`（自动开浏览器）；`stop.bat` 关闭；首次部署双击 `install.bat`（装依赖+下模型，10-30 分钟）。
+
+手动方式：
+
 ```bash
 # 1. 安装依赖（torch 被 Windows 智能应用控制拦截，走 onnxruntime 路线）
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt
 
-# 2. 下载模型（约 1.5GB，int8 量化 onnx，从 ModelScope）
+# 2. 下载模型（约 1.6GB，int8 量化 onnx，从 ModelScope）
 .venv/Scripts/python download_models.py
 
 # 3a. 图形界面（推荐）：浏览器操作全部功能
