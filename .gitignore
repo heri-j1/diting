@@ -14,3 +14,6 @@ config.json
 # 杂项
 *.log
 .zcodeignore
+
+# 测试截图等本地产物
+*.png
