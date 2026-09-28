@@ -7,7 +7,8 @@
 """
 import asyncio
 import datetime
-import os
+import re
+import shutil
 import threading
 import time
 import webbrowser
@@ -21,6 +22,7 @@ from capture import Track, find_loopback_device
 
 ROOT = Path(__file__).parent
 RECORDINGS = ROOT / "recordings"
+ARCHIVE = RECORDINGS / "archive"
 HOST, PORT = "127.0.0.1", 8321
 
 app = FastAPI(title="谛听 Diting")
@@ -138,7 +140,7 @@ def stop_session():
             with lock:
                 state["last_md"] = md
             broadcast({"type": "transcript", "name": Path(md).name, "md": Path(md).read_text(encoding="utf-8")})
-            broadcast({"type": "recordings", "list": list_recordings()})
+            broadcast({"type": "recordings"})
         except Exception as e:
             with lock:
                 state["error"] = str(e)
@@ -164,9 +166,35 @@ class _WsDisplay:
 
 
 # ---------- REST ----------
-def list_recordings():
+_BASE_RE = re.compile(r"^[\w\-]+$")
+
+
+def _safe_base(name: str) -> str:
+    """从会话名或文稿文件名提取并校验 base（如 20260928-211349），防路径穿越"""
+    base = name[: -len("_transcript.md")] if name.endswith("_transcript.md") else name
+    if not _BASE_RE.match(base):
+        raise ValueError(f"非法名称: {name!r}")
+    return base
+
+
+def _session_files(directory: Path, base: str):
+    """某次会话在目录下的全部产物：文稿 / 双轨录音 wav / 导出的 docx"""
+    return sorted(directory.glob(f"{base}_*")) + sorted(directory.glob(f"{base}.docx"))
+
+
+def _find_md(name: str) -> Path:
+    md_name = _safe_base(name) + "_transcript.md"
+    for d in (RECORDINGS, ARCHIVE):
+        p = d / md_name
+        if p.exists():
+            return p
+    raise FileNotFoundError(name)
+
+
+def list_recordings(view: str = "active"):
+    folder = ARCHIVE if view == "archive" else RECORDINGS
     out = []
-    for md in sorted(RECORDINGS.glob("*_transcript.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+    for md in sorted(folder.glob("*_transcript.md"), key=lambda p: p.stat().st_mtime, reverse=True):
         base = md.name[: -len("_transcript.md")]
         out.append({"name": base, "md": md.name,
                     "mtime": datetime.datetime.fromtimestamp(md.stat().st_mtime).strftime("%m-%d %H:%M")})
@@ -205,16 +233,52 @@ def api_stop():
 
 
 @app.get("/api/recordings")
-def api_recordings():
-    return list_recordings()
+def api_recordings(view: str = "active"):
+    return list_recordings(view)
+
+
+@app.post("/api/archive")
+def api_archive(body: dict):
+    """归档/还原：会话全部产物（文稿+录音+docx）在 recordings/ 与 recordings/archive/ 间整体搬移"""
+    try:
+        base = _safe_base(body.get("name", ""))
+        undo = bool(body.get("undo"))
+        src, dst = (ARCHIVE, RECORDINGS) if undo else (RECORDINGS, ARCHIVE)
+        files = _session_files(src, base)
+        if not files:
+            return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+        dst.mkdir(parents=True, exist_ok=True)
+        for p in files:
+            shutil.move(str(p), str(dst / p.name))
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    broadcast({"type": "recordings"})
+    return {"ok": True, "moved": len(files)}
+
+
+@app.post("/api/delete")
+def api_delete(body: dict):
+    """永久删除某次会话的全部产物（录音含隐私，不可恢复）"""
+    try:
+        base = _safe_base(body.get("name", ""))
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    n = 0
+    for d in (RECORDINGS, ARCHIVE):
+        for p in _session_files(d, base):
+            p.unlink(missing_ok=True)
+            n += 1
+    broadcast({"type": "recordings"})
+    return {"ok": True, "deleted": n}
 
 
 @app.get("/api/transcript")
 def api_transcript(name: str):
-    md = RECORDINGS / name
-    if not name.endswith("_transcript.md") or not md.exists():
+    try:
+        md = _find_md(name)
+    except (ValueError, FileNotFoundError):
         return JSONResponse({"error": "not found"}, status_code=404)
-    return {"name": name, "md": md.read_text(encoding="utf-8")}
+    return {"name": md.name, "md": md.read_text(encoding="utf-8")}
 
 
 @app.get("/api/export")
@@ -223,10 +287,11 @@ def api_export(name: str, fmt: str = "srt"):
     from fastapi import Response
     import export as _export
 
-    md = RECORDINGS / name
-    if not name.endswith("_transcript.md") or not md.exists():
+    try:
+        md = _find_md(name)
+    except (ValueError, FileNotFoundError):
         return JSONResponse({"error": "not found"}, status_code=404)
-    base = name[: -len("_transcript.md")]
+    base = md.name[: -len("_transcript.md")]
     md_text = md.read_text(encoding="utf-8")
     if fmt == "srt":
         return Response(
@@ -235,7 +300,7 @@ def api_export(name: str, fmt: str = "srt"):
             headers={"Content-Disposition": f'attachment; filename="{base}.srt"'},
         )
     if fmt == "docx":
-        docx = RECORDINGS / f"{base}.docx"
+        docx = md.parent / f"{base}.docx"
         _export.md_to_docx(str(md), str(docx))
         return FileResponse(docx, filename=f"{base}.docx",
                             headers={"Content-Disposition": f'attachment; filename="{base}.docx"'})
