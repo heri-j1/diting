@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>谛听 Diting · 会议录音转文字</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#111318; --card:#1a1d24; --card2:#20242d; --line:#2b303b; --fg:#e8eaed;
+          --dim:#8b93a1; --green:#7ee787; --blue:#79c0ff; --red:#ff7b72; --amber:#e3b341; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg); font-family:"Microsoft YaHei UI",system-ui,sans-serif;
+         display:flex; height:100vh; overflow:hidden; }
+  aside { width:230px; background:var(--card); border-right:1px solid var(--line); padding:14px;
+          display:flex; flex-direction:column; gap:8px; flex-shrink:0; }
+  aside h1 { font-size:19px; } aside h1 span { color:var(--green); }
+  aside .sub { color:var(--dim); font-size:12px; margin-bottom:8px; }
+  aside h2 { font-size:12px; color:var(--dim); font-weight:normal; margin:8px 0 2px; }
+  #recList { overflow-y:auto; flex:1; }
+  .recItem { padding:8px 10px; border-radius:8px; cursor:pointer; font-size:13px; color:var(--fg); }
+  .recItem:hover { background:var(--card2); } .recItem.on { background:var(--card2); color:var(--blue); }
+  .recItem small { display:block; color:var(--dim); font-size:11px; }
+  main { flex:1; overflow-y:auto; padding:18px 22px; display:flex; flex-direction:column; gap:14px; }
+  .row { display:flex; gap:12px; align-items:center; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 18px; }
+  #btnStart { width:150px; height:52px; border-radius:26px; border:0; font-size:17px; cursor:pointer;
+              background:var(--green); color:#10240f; font-weight:bold; }
+  #btnStart.stop { background:var(--red); color:#fff; }
+  #btnStart:disabled { background:var(--card2); color:var(--dim); cursor:wait; }
+  .badge { padding:3px 12px; border-radius:12px; font-size:13px; background:var(--card2); color:var(--dim); }
+  .badge.rec { background:#3a1d1d; color:var(--red); }
+  .badge.trx { background:#33290f; color:var(--amber); }
+  #elapsed { font-variant-numeric:tabular-nums; color:var(--dim); }
+  .levels { display:flex; gap:14px; margin-left:auto; }
+  .lv { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--dim); }
+  .bar { width:90px; height:8px; background:var(--card2); border-radius:4px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:0; background:var(--green); transition:width .2s; }
+  #live { min-height:120px; max-height:260px; overflow-y:auto; font-size:16px; line-height:1.8; }
+  #live .final b { color:var(--dim); font-weight:normal; font-size:12px; margin-right:8px; }
+  #partial { color:var(--green); min-height:1.8em; }
+  #progress { color:var(--amber); font-size:13px; min-height:1.4em; margin-top:6px; }
+  #doc { line-height:2; font-size:15px; }
+  #doc h3 { margin:14px 0 4px; color:var(--blue); font-size:15px; }
+  #doc .ts { color:var(--dim); font-size:12px; margin-right:10px; font-variant-numeric:tabular-nums; }
+  #doc hr { border:0; border-top:1px dashed var(--line); margin:16px 0; }
+  details { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px 18px; }
+  summary { cursor:pointer; color:var(--dim); font-size:14px; }
+  textarea { width:100%; height:120px; background:var(--bg); color:var(--fg); border:1px solid var(--line);
+             border-radius:8px; padding:10px; font-family:inherit; font-size:13px; margin:8px 0; }
+  input { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:8px;
+          padding:8px 10px; font-size:13px; width:100%; }
+  .frow { display:flex; gap:10px; margin:8px 0; } .frow label { width:70px; color:var(--dim); font-size:13px; line-height:2.4; }
+  button.save { background:var(--blue); color:#0d1a26; border:0; border-radius:8px; padding:7px 18px; cursor:pointer; }
+  .toast { position:fixed; top:16px; right:16px; background:var(--card2); border:1px solid var(--line);
+           padding:10px 18px; border-radius:10px; display:none; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>谛听 <span>Diting</span></h1>
+  <div class="sub">本地会议录音转文字</div>
+  <h2>历史文稿</h2>
+  <div id="recList"></div>
+</aside>
+<main>
+  <div class="card row">
+    <button id="btnStart">● 开始录音</button>
+    <div>
+      <span id="phase" class="badge">未录音</span>
+      <span id="elapsed">00:00</span>
+      <div id="detail" style="color:var(--dim);font-size:12px;margin-top:4px;"></div>
+    </div>
+    <div class="levels">
+      <div class="lv">系统 <div class="bar"><i id="lv-sys"></i></div></div>
+      <div class="lv">麦克风 <div class="bar"><i id="lv-mic"></i></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="color:var(--dim);font-size:13px;margin-bottom:6px;">实时字幕</div>
+    <div id="live"></div>
+    <div id="partial"></div>
+    <div id="progress"></div>
+  </div>
+
+  <div class="card" id="docCard" style="display:none;">
+    <div style="color:var(--dim);font-size:13px;margin-bottom:6px;" id="docTitle">文稿</div>
+    <div id="doc"></div>
+  </div>
+
+  <details>
+    <summary>设置 · 热词与纪要接口</summary>
+    <div style="color:var(--dim);font-size:13px;margin-top:10px;">热词表（一行一个，# 注释）：专有名词、人名、产品名</div>
+    <textarea id="hotwords"></textarea>
+    <button class="save" onclick="saveHotwords()">保存热词</button>
+    <div style="color:var(--dim);font-size:13px;margin:14px 0 4px;">纪要接口（OpenAI 兼容；api_base 留空 = 模拟模式）</div>
+    <div class="frow"><label>api_base</label><input id="cfg-base" placeholder="https://xx/v1"></div>
+    <div class="frow"><label>api_key</label><input id="cfg-key" type="password" placeholder="留空则不修改"></div>
+    <div class="frow"><label>model</label><input id="cfg-model" placeholder="qwen-plus"></div>
+    <button class="save" onclick="saveConfig()">保存接口配置</button>
+  </details>
+</main>
+<div id="toast" class="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let phase = 'idle', ws, timer;
+
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.style.display='block';
+  clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',2500); }
+function fmt(s){ s=Math.floor(s); return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); }
+
+function setPhase(p, detail, elapsed){
+  phase = p;
+  const b = $('phase');
+  b.className = 'badge' + (p==='recording'?' rec':p==='transcribing'||p==='loading'?' trx':'');
+  b.textContent = {idle:'未录音', loading:'准备中', recording:'录音中', transcribing:'精转中'}[p] || p;
+  $('btnStart').textContent = (p==='recording') ? '■ 停止录音' : '● 开始录音';
+  $('btnStart').classList.toggle('stop', p==='recording');
+  $('btnStart').disabled = (p==='loading'||p==='transcribing');
+  $('detail').textContent = detail || '';
+  clearInterval(timer);
+  if (p==='recording') { $('elapsed').textContent = fmt(elapsed||0);
+    let base = elapsed||0, t0 = Date.now();
+    timer = setInterval(()=> $('elapsed').textContent = fmt(base + (Date.now()-t0)/1000), 500);
+  } else $('elapsed').textContent = '00:00';
+  if (p==='idle') { $('lv-sys').style.width = 0; $('lv-mic').style.width = 0; }
+}
+
+function addFinal(track, ts, text){
+  const div = document.createElement('div'); div.className='final';
+  div.innerHTML = `<b>[${ts}] ${track}</b>${text}`;
+  $('live').appendChild(div);
+  while ($('live').children.length > 60) $('live').firstChild.remove();
+  $('live').scrollTop = $('live').scrollHeight;
+}
+
+function loadRecordings(){
+  fetch('/api/recordings').then(r=>r.json()).then(list=>{
+    $('recList').innerHTML = '';
+    list.forEach(r=>{
+      const d = document.createElement('div');
+      d.className='recItem'; d.innerHTML = `${r.name}<small>${r.mtime}</small>`;
+      d.onclick = ()=>{ document.querySelectorAll('.recItem').forEach(x=>x.classList.remove('on'));
+        d.classList.add('on'); loadTranscript(r.md, r.name); };
+      $('recList').appendChild(d);
+    });
+  });
+}
+
+function renderMd(md){
+  const doc = $('doc'); doc.innerHTML = '';
+  let inMinutes = false;
+  md.split('\n').forEach(line=>{
+    const l = line.trim();
+    if (l.startsWith('# 会议纪要')) { inMinutes = true; doc.appendChild(document.createElement('hr'));
+      const h = document.createElement('h3'); h.textContent = '会议纪要'; doc.appendChild(h); return; }
+    if (l.startsWith('## ')) { const h = document.createElement('h3'); h.textContent = l.slice(3); doc.appendChild(h); return; }
+    if (l.startsWith('# ') || !l) return;
+    if (l.startsWith('---')) { doc.appendChild(document.createElement('hr')); return; }
+    const p = document.createElement('div');
+    const m = l.match(/^\[(\d{2}:\d{2})\]\s*(.*)$/);
+    if (m && !inMinutes) p.innerHTML = `<span class="ts">${m[1]}</span>${m[2]}`;
+    else p.textContent = l;
+    doc.appendChild(p);
+  });
+  $('docCard').style.display = 'block';
+}
+
+function loadTranscript(file, name){
+  fetch('/api/transcript?name='+encodeURIComponent(file)).then(r=>r.json())
+    .then(d=>{ $('docTitle').textContent = '文稿 · ' + (name||file); renderMd(d.md); });
+}
+
+function saveHotwords(){
+  fetch('/api/hotwords',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({text:$('hotwords').value})}).then(()=>toast('热词已保存'));
+}
+function saveConfig(){
+  fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({api_base:$('cfg-base').value, api_key:$('cfg-key').value, model:$('cfg-model').value})})
+    .then(()=>toast('接口配置已保存'));
+}
+
+$('btnStart').onclick = ()=>{
+  if (phase==='recording') {
+    fetch('/api/stop',{method:'POST'});
+  } else if (phase==='idle') {
+    $('live').innerHTML=''; $('partial').textContent=''; $('progress').textContent='';
+    fetch('/api/start',{method:'POST'}).then(r=>r.json()).then(d=>{
+      if(!d.ok) toast('启动失败: '+d.error);
+    });
+  }
+};
+
+function connect(){
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = ev=>{
+    const m = JSON.parse(ev.data);
+    if (m.type==='status') setPhase(m.phase, m.detail, m.elapsed);
+    else if (m.type==='partial') $('partial').textContent = m.text ? `▶ ${m.track}｜${m.text}` : '';
+    else if (m.type==='final') { $('partial').textContent=''; addFinal(m.track, m.ts, m.text); }
+    else if (m.type==='level') { $('lv-sys').style.width = (m['系统']||0)*100+'%';
+                                 $('lv-mic').style.width = (m['麦克风']||0)*100+'%'; }
+    else if (m.type==='progress') $('progress').textContent = m.msg;
+    else if (m.type==='transcript') { $('progress').textContent=''; $('docTitle').textContent='文稿 · '+m.name;
+                                      renderMd(m.md); }
+    else if (m.type==='recordings') loadRecordings();
+  };
+  ws.onclose = ()=> setTimeout(connect, 1500);
+}
+
+fetch('/api/status').then(r=>r.json()).then(s=> setPhase(s.phase, s.detail, s.elapsed));
+fetch('/api/hotwords').then(r=>r.json()).then(d=> $('hotwords').value = d.text||'');
+fetch('/api/config').then(r=>r.json()).then(d=>{ $('cfg-base').value=d.api_base||'';
+  $('cfg-model').value=d.model||''; $('cfg-key').placeholder=d.api_key?'已设置(留空不修改)':'留空则不修改'; });
+loadRecordings();
+connect();
+</script>
+</body>
+</html>

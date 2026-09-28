@@ -10,3 +10,6 @@ PyAudioWPatch
 soundfile
 requests
 pypinyin
+fastapi
+uvicorn[standard]
+websockets

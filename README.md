@@ -12,9 +12,24 @@ python -m venv .venv
 # 2. 下载模型（约 1.5GB，int8 量化 onnx，从 ModelScope）
 .venv/Scripts/python download_models.py
 
-# 3. 开会：一条命令全流程
+# 3a. 图形界面（推荐）：浏览器操作全部功能
+.venv/Scripts/python webapp.py        # 自动打开 http://127.0.0.1:8321
+
+# 3b. 命令行：一条命令全流程
 .venv/Scripts/python record_meeting.py
 ```
+
+## Web 界面
+
+浏览器（默认自动打开 `http://127.0.0.1:8321`，仅本机可访问）里完成全部操作：
+
+- **控制**：开始/停止录音、状态徽章、计时、双轨音量条
+- **实时字幕**：定稿行（白）+ 正在说（绿），随说随出
+- **文稿**：停止后自动渲染带时间戳的文稿与会议纪要
+- **历史文稿**：左侧列表，点击即看任意一场
+- **设置**：热词表编辑、qwen 接口配置（api_base/key/model）
+
+`webapp.py` 只做会话编排与通信，采集/模型/转写逻辑与命令行共用同一套模块。
 
 ## 日常使用
 
@@ -63,7 +78,8 @@ python record_meeting.py --stop-after 1800 --no-transcribe --no-summarize  # 纯
 
 | 文件 | 职责 |
 |---|---|
-| `record_meeting.py` | 全流程入口（采集+字幕窗+精转+纪要） |
+| `record_meeting.py` | 命令行全流程入口（采集+字幕窗+精转+纪要） |
+| `webapp.py` + `static/index.html` | Web 界面（FastAPI 后端 + WebSocket + 单页前端） |
 | `capture.py` | 双轨采集：WASAPI loopback + 麦克风，轮询式、静音补齐、音频回调 |
 | `live_subtitles.py` | 实时字幕（流式 VAD + 流式 ASR），Console/Window 双显示端 |
 | `subtitle_window.py` | 置顶半透明字幕窗（tkinter） |

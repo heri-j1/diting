@@ -95,7 +95,7 @@ def _group_segments(segments):
     return blocks
 
 
-def transcribe_file(models, path):
+def transcribe_file(models, path, progress=None):
     """转写单个音频，返回带时间戳的语句块 [(beg_ms, end_ms, text), ...]
     流程：librosa 统一加载(支持wav/mp3/flac等) → VAD 切句 → 逐块识别 → 逐块加标点"""
     asr, vad, punc = models
@@ -106,6 +106,8 @@ def transcribe_file(models, path):
     segments = [(b, e) for b, e in segments if e - b >= MIN_SEG_MS]
     if not segments:
         print(f"  未检测到语音: {os.path.basename(path)}")
+        if progress:
+            progress(f"{os.path.basename(path)}: 未检测到语音")
         return []
 
     blocks = []
@@ -126,7 +128,10 @@ def transcribe_file(models, path):
         except Exception as e:
             print(f"  [标点恢复失败，用原文] {e}")
         blocks.append((beg_ms, end_ms, text))
-        print(f"  [{i}/{len(total)}] {_fmt_ts(beg_ms)} {text[:30]}{'...' if len(text) > 30 else ''}")
+        msg = f"[{i}/{len(total)}] {_fmt_ts(beg_ms)} {text[:30]}{'...' if len(text) > 30 else ''}"
+        print(f"  {msg}")
+        if progress:
+            progress(msg)
     print(f"  {os.path.basename(path)}: {len(blocks)} 块, 耗时 {time.time() - t0:.0f}s")
     return blocks
 
@@ -150,7 +155,7 @@ def _apply_hotwords(blocks, hotwords):
     return fixed_blocks
 
 
-def transcribe_pair(loopback_wav, mic_wav=None, summarize=True):
+def transcribe_pair(loopback_wav, mic_wav=None, summarize=True, progress=None):
     """转写双轨录音 → 带时间戳的 Markdown 文稿 → 热词校正 → 生成会议纪要；返回 md 路径"""
     models = get_models()
     import hotwords as _hw
@@ -158,6 +163,8 @@ def transcribe_pair(loopback_wav, mic_wav=None, summarize=True):
     hotwords = _hw.load_hotwords()
     if hotwords:
         print(f"热词: {len(hotwords)} 个（{'、'.join(hotwords[:5])}{'...' if len(hotwords) > 5 else ''}）")
+        if progress:
+            progress(f"热词: {len(hotwords)} 个")
     sections = []
 
     for wav, meeting_title in (
@@ -169,7 +176,9 @@ def transcribe_pair(loopback_wav, mic_wav=None, summarize=True):
         stem = os.path.splitext(os.path.basename(wav))[0]
         title = meeting_title if stem.endswith(("_loopback", "_mic")) else "转写内容"
         print(f"转写: {os.path.basename(wav)} ...")
-        blocks = transcribe_file(models, wav)
+        if progress:
+            progress(f"转写 {title} ...")
+        blocks = transcribe_file(models, wav, progress=progress)
         if hotwords and blocks:
             blocks = _apply_hotwords(blocks, hotwords)
         if blocks:
@@ -185,11 +194,15 @@ def transcribe_pair(loopback_wav, mic_wav=None, summarize=True):
             for beg_ms, _, text in blocks:
                 f.write(f"[{_fmt_ts(beg_ms)}] {text}\n\n")
     if summarize:
+        if progress:
+            progress("生成会议纪要...")
         try:
             import summarize
             summarize.append_minutes(md_path)
         except Exception as e:
             print(f"[纪要生成失败，不影响文稿] {e}")
+    if progress:
+        progress(f"完成: {os.path.basename(md_path)}")
     return md_path
 
 
