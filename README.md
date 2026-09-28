@@ -49,7 +49,18 @@ python record_meeting.py --stop-after 1800 --no-transcribe --no-summarize  # 纯
 ```
 
 - **字幕窗操作**：拖动移动位置；■ 按钮 / Esc 停止录音
-- **输出**：`recordings/时间戳_loopback.wav`（会议对端声音）、`时间戳_mic.wav`（本机麦克风，无麦克风自动跳过）、`时间戳_transcript.md`（文稿+纪要）
+- **输出**：`recordings/时间戳_loopback.wav`（会议对端声音）、`时间戳_mic.wav`（本机麦克风，无麦克风自动跳过）、`时间戳_transcript.md`（文稿+纪要）、`时间戳_transcript.srt`（精确时间轴字幕，剪辑软件直接可用）
+
+## 导出 SRT / Word
+
+- 转写完成时**自动生成 SRT**（双轨按时间合并，块起止为 VAD 真实时间）
+- 网页文稿卡右上角「导出 SRT / 导出 Word」按钮，随时转换任意历史文稿
+- 命令行批量转换（生成 .srt + .docx）：
+
+```bash
+.venv/Scripts/python export.py 文稿_transcript.md
+.venv/Scripts/python export.py recordings/     # 批量
+```
 
 ## 整体架构
 
@@ -86,6 +97,7 @@ python record_meeting.py --stop-after 1800 --no-transcribe --no-summarize  # 纯
 | `transcribe.py` | 会后精转：VAD 切句 → 识别 → 时间戳 → 标点 |
 | `hotwords.py` | 热词校正（拼音模糊 + LLM 两层） |
 | `summarize.py` | 会议纪要（qwen OpenAI 兼容接口 + 模拟模式） |
+| `export.py` | SRT 字幕 / Word 文档导出（转写后自动 + 命令行批量） |
 | `download_models.py` | 模型下载（HTTP 直连 ModelScope） |
 | `models/` | 本地模型（gitignore，约 1.5GB） |
 | `hotwords.txt` / `config.json` | 热词表 / 纪要接口配置（gitignore，仓库有 example） |

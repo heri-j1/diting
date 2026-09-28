@@ -13,3 +13,4 @@ pypinyin
 fastapi
 uvicorn[standard]
 websockets
+python-docx

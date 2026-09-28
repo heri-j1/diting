@@ -217,6 +217,31 @@ def api_transcript(name: str):
     return {"name": name, "md": md.read_text(encoding="utf-8")}
 
 
+@app.get("/api/export")
+def api_export(name: str, fmt: str = "srt"):
+    """文稿导出：fmt=srt 字幕 / fmt=docx Word 文档"""
+    from fastapi import Response
+    import export as _export
+
+    md = RECORDINGS / name
+    if not name.endswith("_transcript.md") or not md.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    base = name[: -len("_transcript.md")]
+    md_text = md.read_text(encoding="utf-8")
+    if fmt == "srt":
+        return Response(
+            content=_export.md_to_srt_text(md_text),
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{base}.srt"'},
+        )
+    if fmt == "docx":
+        docx = RECORDINGS / f"{base}.docx"
+        _export.md_to_docx(str(md), str(docx))
+        return FileResponse(docx, filename=f"{base}.docx",
+                            headers={"Content-Disposition": f'attachment; filename="{base}.docx"'})
+    return JSONResponse({"error": "fmt must be srt or docx"}, status_code=400)
+
+
 @app.get("/api/hotwords")
 def api_hotwords():
     p = ROOT / "hotwords.txt"

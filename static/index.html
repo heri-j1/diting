@@ -83,7 +83,13 @@
   </div>
 
   <div class="card" id="docCard" style="display:none;">
-    <div style="color:var(--dim);font-size:13px;margin-bottom:6px;" id="docTitle">文稿</div>
+    <div class="row" style="justify-content:space-between;">
+      <div style="color:var(--dim);font-size:13px;" id="docTitle">文稿</div>
+      <div class="row" style="gap:8px;">
+        <button class="save" style="padding:4px 12px;font-size:12px;" id="btnSrt">导出 SRT</button>
+        <button class="save" style="padding:4px 12px;font-size:12px;" id="btnDocx">导出 Word</button>
+      </div>
+    </div>
     <div id="doc"></div>
   </div>
 
@@ -166,10 +172,18 @@ function renderMd(md){
   $('docCard').style.display = 'block';
 }
 
+let curMdFile = null;   // 当前展示的文稿文件名（导出用）
+function setCurrentDoc(file, name){
+  curMdFile = file;
+  $('docTitle').textContent = '文稿 · ' + (name || file);
+  $('docCard').style.display = 'block';
+}
 function loadTranscript(file, name){
   fetch('/api/transcript?name='+encodeURIComponent(file)).then(r=>r.json())
-    .then(d=>{ $('docTitle').textContent = '文稿 · ' + (name||file); renderMd(d.md); });
+    .then(d=>{ setCurrentDoc(file, name); renderMd(d.md); });
 }
+$('btnSrt').onclick = ()=> curMdFile && window.open('/api/export?name='+encodeURIComponent(curMdFile)+'&fmt=srt');
+$('btnDocx').onclick = ()=> curMdFile && window.open('/api/export?name='+encodeURIComponent(curMdFile)+'&fmt=docx');
 
 function saveHotwords(){
   fetch('/api/hotwords',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -202,7 +216,7 @@ function connect(){
     else if (m.type==='level') { $('lv-sys').style.width = (m['系统']||0)*100+'%';
                                  $('lv-mic').style.width = (m['麦克风']||0)*100+'%'; }
     else if (m.type==='progress') $('progress').textContent = m.msg;
-    else if (m.type==='transcript') { $('progress').textContent=''; $('docTitle').textContent='文稿 · '+m.name;
+    else if (m.type==='transcript') { $('progress').textContent=''; setCurrentDoc(m.name, m.name);
                                       renderMd(m.md); }
     else if (m.type==='recordings') loadRecordings();
   };

@@ -193,6 +193,16 @@ def transcribe_pair(loopback_wav, mic_wav=None, summarize=True, progress=None):
             f.write(f"## {title}\n\n")
             for beg_ms, _, text in blocks:
                 f.write(f"[{_fmt_ts(beg_ms)}] {text}\n\n")
+
+    # 自动生成精确时间轴的 SRT 字幕（双轨合并按时间排序），剪辑软件可直接使用
+    try:
+        import export as _export
+        all_blocks = sorted((b for _, blks in sections for b in blks), key=lambda b: b[0])
+        srt_path = os.path.splitext(md_path)[0] + ".srt"
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write(_export.blocks_to_srt(all_blocks))
+    except Exception as e:
+        print(f"[SRT 生成失败，不影响文稿] {e}")
     if summarize:
         if progress:
             progress("生成会议纪要...")
