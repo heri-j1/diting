@@ -95,9 +95,10 @@ def _group_segments(segments):
     return blocks
 
 
-def transcribe_file(models, path, progress=None):
+def transcribe_file(models, path, progress=None, split_by_vad=False):
     """转写单个音频，返回带时间戳的语句块 [(beg_ms, end_ms, text), ...]
-    流程：librosa 统一加载(支持wav/mp3/flac等) → VAD 切句 → 逐块识别 → 逐块加标点"""
+    流程：librosa 统一加载(支持wav/mp3/flac等) → VAD 切句 → 逐块识别 → 逐块加标点
+    split_by_vad=True 时不合并相邻段（说话人分离需要按 VAD 段独立归属）"""
     asr, vad, punc = models
     t0 = time.time()
     speech, _ = librosa.load(path, sr=16000, mono=True)
@@ -111,7 +112,7 @@ def transcribe_file(models, path, progress=None):
         return []
 
     blocks = []
-    total = _group_segments(segments)
+    total = segments if split_by_vad else _group_segments(segments)
     for i, (beg_ms, end_ms) in enumerate(total, 1):
         chunk = speech[int(beg_ms / 1000 * 16000) : int(end_ms / 1000 * 16000)]
         if len(chunk) < 1600:
@@ -156,9 +157,14 @@ def _apply_hotwords(blocks, hotwords):
 
 
 def transcribe_pair(loopback_wav, mic_wav=None, summarize=True, progress=None):
-    """转写双轨录音 → 带时间戳的 Markdown 文稿 → 热词校正 → 生成会议纪要；返回 md 路径"""
+    """转写双轨录音 → 带时间戳的 Markdown 文稿 → 热词校正 → 说话人分离 → 生成会议纪要"""
     models = get_models()
     import hotwords as _hw
+    import json as _json
+
+    _cp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    cfg = _json.loads(open(_cp, encoding="utf-8").read()) if os.path.exists(_cp) else {}
+    diarize_on = bool(cfg.get("diarize", True))
 
     hotwords = _hw.load_hotwords()
     if hotwords:
@@ -178,9 +184,21 @@ def transcribe_pair(loopback_wav, mic_wav=None, summarize=True, progress=None):
         print(f"转写: {os.path.basename(wav)} ...")
         if progress:
             progress(f"转写 {title} ...")
-        blocks = transcribe_file(models, wav, progress=progress)
+        split = diarize_on and stem.endswith("_loopback")
+        blocks = transcribe_file(models, wav, progress=progress, split_by_vad=split)
         if hotwords and blocks:
             blocks = _apply_hotwords(blocks, hotwords)
+        # 说话人分离（仅对"对方/系统声"轨；麦克风轨固定为"我"）
+        if blocks and split:
+            try:
+                import librosa as _lb
+                import diarize as _dz
+                if progress:
+                    progress("说话人分离中...")
+                sp, _ = _lb.load(wav, sr=16000, mono=True)
+                blocks = _dz.label_track(sp, blocks, cfg)
+            except Exception as e:
+                print(f"[说话人分离失败，跳过] {e}")
         if blocks:
             sections.append((title, blocks))
 
@@ -191,13 +209,20 @@ def transcribe_pair(loopback_wav, mic_wav=None, summarize=True, progress=None):
         f.write(f"# 会议转写 {base}\n\n")
         for title, blocks in sections:
             f.write(f"## {title}\n\n")
-            for beg_ms, _, text in blocks:
-                f.write(f"[{_fmt_ts(beg_ms)}] {text}\n\n")
+            for row in blocks:
+                beg_ms, text = row[0], row[2]
+                spk = f"[说话人{row[3]}]" if len(row) > 3 else ""
+                f.write(f"[{_fmt_ts(beg_ms)}]{spk} {text}\n\n")
 
     # 自动生成精确时间轴的 SRT 字幕（双轨合并按时间排序），剪辑软件可直接使用
     try:
         import export as _export
-        all_blocks = sorted((b for _, blks in sections for b in blks), key=lambda b: b[0])
+        rows = []
+        for _, blks in sections:
+            for r in blks:
+                spk = f"[说话人{r[3]}] " if len(r) > 3 else ""
+                rows.append((r[0], r[1], spk + r[2]))
+        all_blocks = sorted(rows, key=lambda r: r[0])
         srt_path = os.path.splitext(md_path)[0] + ".srt"
         with open(srt_path, "w", encoding="utf-8") as f:
             f.write(_export.blocks_to_srt(all_blocks))

@@ -1,6 +1,6 @@
 # 谛听 Diting — 会议录音转文字（本地部署）
 
-中文会议专用。开会时**置顶字幕窗实时出字幕**，散会后自动精转成**带时间戳的文稿**、按热词校正专有名词，并调用 qwen 生成**会议纪要**。全程本地运行，数据不出本机。
+中文会议专用。开会时**置顶字幕窗实时出字幕**，散会后自动精转成**带时间戳、带说话人标签的文稿**、按热词校正专有名词，并调用 qwen 生成**会议纪要**。全程本地运行，数据不出本机。
 
 ## 快速开始
 
@@ -96,6 +96,7 @@ python record_meeting.py --stop-after 1800 --no-transcribe --no-summarize  # 纯
 | `subtitle_window.py` | 置顶半透明字幕窗（tkinter） |
 | `transcribe.py` | 会后精转：VAD 切句 → 识别 → 时间戳 → 标点 |
 | `hotwords.py` | 热词校正（拼音模糊 + LLM 两层） |
+| `diarize.py` | 说话人分离（CAM++ 声纹 + 余弦层次聚类） |
 | `summarize.py` | 会议纪要（qwen OpenAI 兼容接口 + 模拟模式） |
 | `export.py` | SRT 字幕 / Word 文档导出（转写后自动 + 命令行批量） |
 | `download_models.py` | 模型下载（HTTP 直连 ModelScope） |
@@ -108,6 +109,15 @@ python record_meeting.py --stop-after 1800 --no-transcribe --no-summarize  # 纯
 
 - **本地拼音模糊校正**（离线，默认生效）：同音字（盾太郎→钝太狼）、字母替代（谛听→d听/di听）等
 - **LLM 语义校正**（配置 qwen 接口后自动启用）：覆盖近音字（别→扁）等拼音法治不了的情况
+
+## 说话人分离
+
+"对方轨"自动区分多位发言人，文稿行带 `[说话人N]` 标签（amber 高亮），纪要按人归属发言：
+
+- 模型：CAM++ 声纹（onnx，192 维，`models/campplus_sv.onnx`）
+- 流程：VAD 切段（≥600ms）→ 逐段声纹 → 余弦层次聚类 → 单段簇就近合并 → 按时间重叠归属到转写块
+- 配置：`diarize: true/false`、`diarize_threshold: 0.4`（余弦距离，调小更易合并）、`num_speakers`（强制人数，缺省自动）
+- 双真实音源实测：成对准确率 100%
 
 ## 会议纪要（qwen）
 
@@ -124,19 +134,19 @@ python record_meeting.py --stop-after 1800 --no-transcribe --no-summarize  # 纯
 - ✅ 端到端：扬声器播放语音 → loopback 采集 → 转写，逐字一致；真实配音（1.mp3）转写完整连贯
 - ✅ 实时字幕：流式 VAD 断句 + 增量出字，CPU 处理速度约为实时的 7 倍；字幕窗置顶渲染、Esc/自动停止实测
 - ✅ 时间戳：与 wav 内实际声音位置误差 < 1s；静音补齐后 wav 时长 = 真实时长
-- ✅ 热词：盾太郎→钝太狼、地听/卞老大→谛听/扁老大 实测生效
+- ✅ 热词：盾太郎→钝太狼、地听/卞老大→谛听/扁老大 实测生效；LLM 层 别老大→扁老大
+- ✅ 说话人分离：双真实音源成对准确率 100%；VAD 级归属正确，停顿碎片自动并入邻近说话人
 - ✅ 纯 CPU 运行（onnxruntime），模型加载约 10s
 
 ## 技术说明
 
-- **模型**：FunASR onnx int8 量化版——Paraformer-large（离线识别）、Paraformer-online（流式识别）、FSMN-VAD（离线/流式切句）、CT-Transformer（标点），共约 1.5GB
+- **模型**：FunASR onnx int8 量化版——Paraformer-large（离线识别）、Paraformer-online（流式识别）、FSMN-VAD（离线/流式切句）、CT-Transformer（标点）、CAM++（声纹，说话人分离），共约 1.6GB
 - **不用 torch**：Windows「智能应用控制」(Smart App Control) 会拦截 torch 的 DLL 加载（WinError 4551），故全程 onnxruntime；代价是 FunASR 的 SeACo 热词模型（无公开 onnx 版）无法使用，热词改由后处理校正实现
 - **录音**：Windows 10+ 自带 WASAPI loopback，无需虚拟声卡；双轨分开 = 天然区分"我 / 对方"
 - **注意事项**：录音请事先告知参会者；loopback 静音期由程序补零帧保持时间轴连续
 
 ## 下一步（可选）
 
-- 说话人分离（CAM++，同一轨内区分多人，让纪要能写"谁说了什么"）
-- 导出 SRT 字幕 / Word
+- 真实会议实测（用网页或命令行跑一场，按实际痛点迭代）
 - GPU 加速（需关闭智能应用控制，不可逆；当前 CPU 已有 7 倍实时余量，优先级低）
 - 一键安装脚本 / LICENSE（开源准备）
