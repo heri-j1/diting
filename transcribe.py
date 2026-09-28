@@ -131,9 +131,33 @@ def transcribe_file(models, path):
     return blocks
 
 
+def _apply_hotwords(blocks, hotwords):
+    """对转写块应用热词校正：本地拼音校正 + LLM 校正（配置接口时）"""
+    import hotwords as _hw
+
+    fixed_blocks = []
+    total = []
+    for beg_ms, end_ms, text in blocks:
+        fixed, reps = _hw.local_correct(text, hotwords)
+        total.extend(reps)
+        fixed_llm = _hw.llm_correct(fixed, hotwords)
+        if fixed_llm:
+            fixed = fixed_llm.strip()
+        fixed_blocks.append((beg_ms, end_ms, fixed))
+    if total:
+        uniq = "、".join(f"{a}→{b}" for a, b in dict(total).items())
+        print(f"  热词校正: {uniq}")
+    return fixed_blocks
+
+
 def transcribe_pair(loopback_wav, mic_wav=None, summarize=True):
-    """转写双轨录音 → 带时间戳的 Markdown 文稿 → 生成会议纪要；返回 md 路径"""
+    """转写双轨录音 → 带时间戳的 Markdown 文稿 → 热词校正 → 生成会议纪要；返回 md 路径"""
     models = get_models()
+    import hotwords as _hw
+
+    hotwords = _hw.load_hotwords()
+    if hotwords:
+        print(f"热词: {len(hotwords)} 个（{'、'.join(hotwords[:5])}{'...' if len(hotwords) > 5 else ''}）")
     sections = []
 
     for wav, meeting_title in (
@@ -146,6 +170,8 @@ def transcribe_pair(loopback_wav, mic_wav=None, summarize=True):
         title = meeting_title if stem.endswith(("_loopback", "_mic")) else "转写内容"
         print(f"转写: {os.path.basename(wav)} ...")
         blocks = transcribe_file(models, wav)
+        if hotwords and blocks:
+            blocks = _apply_hotwords(blocks, hotwords)
         if blocks:
             sections.append((title, blocks))
 

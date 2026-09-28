@@ -43,7 +43,6 @@ class _StreamState:
         self.vad_param = {}
         self.partial = ""
         self.utt_start_ms = None  # 当前句起始时间(ms，流内时间轴，来自 VAD 开始事件)
-        self._disp_len = 0
 
     def _asr(self, chunk, is_final=False):
         res = self.live.asr_online(
@@ -77,7 +76,6 @@ class _StreamState:
             self.live.on_final(self.name, (self.utt_start_ms or 0) / 1000, text.strip())
         self.partial = ""
         self.utt_start_ms = None
-        self._disp_len = 0
 
     @staticmethod
     def _vad_events(segs):
@@ -149,6 +147,28 @@ class _StreamState:
         self._finalize()
 
 
+class ConsoleDisplay:
+    """终端显示：当前句原地上划，定稿落行"""
+
+    def __init__(self):
+        self._disp_len = {}
+
+    def on_final(self, track_name, ts_text, text):
+        print(f"\r\033[K[{ts_text}] {track_name}｜{text}", flush=True)
+        self._disp_len[track_name] = 0
+
+    def render_partial(self, track_name, partial):
+        line = f"▶ {track_name}｜{partial}"
+        pad = " " * max(0, self._disp_len.get(track_name, 0) - len(line))
+        print("\r" + line + pad, end="", flush=True)
+        self._disp_len[track_name] = len(line)
+
+    def clear_partial(self, track_name):
+        if self._disp_len.get(track_name):
+            print("\r\033[K", end="", flush=True)
+            self._disp_len[track_name] = 0
+
+
 class LiveTranscriber:
     """多轨实时字幕。用法:
         live = LiveTranscriber.create()
@@ -157,19 +177,20 @@ class LiveTranscriber:
         live.flush_all()
     """
 
-    def __init__(self, asr_online, vad_online, punc, extract_text):
+    def __init__(self, asr_online, vad_online, punc, extract_text, display=None):
         self.asr_online = asr_online
         self.vad_online = vad_online
         self.punc = punc
         self.extract_text = extract_text
+        self.display = display or ConsoleDisplay()
         self.streams = {}
         self.lock = threading.Lock()
         self.start_time = time.time()
 
     @classmethod
-    def create(cls):
+    def create(cls, display=None):
         """加载流式模型；标点模型复用 transcribe 的缓存，避免重复加载 1GB"""
-        from transcribe import PUNC_MODEL, VAD_MODEL, _extract_text, get_models
+        from transcribe import VAD_MODEL, _extract_text, get_models
         from funasr_onnx.paraformer_online_bin import Paraformer as OnlineParaformer
         from funasr_onnx.vad_bin import Fsmn_vad_online
 
@@ -182,7 +203,7 @@ class LiveTranscriber:
         vad_online = Fsmn_vad_online(
             model_dir=os.path.join(root, "models", _VAD_DIR), quantize=True, device_id="-1",
         )
-        return cls(asr_online, vad_online, punc, _extract_text)
+        return cls(asr_online, vad_online, punc, _extract_text, display)
 
     def callback(self, name, rate, channels):
         """为一条音轨生成 on_audio 回调"""
@@ -196,20 +217,15 @@ class LiveTranscriber:
 
     def on_final(self, track_name, start_sec, text):
         with self.lock:
-            print(f"\r\033[K[{_fmt_ts(start_sec)}] {track_name}｜{text}", flush=True)
+            self.display.on_final(track_name, _fmt_ts(start_sec), text)
 
     def render_partial(self, track_name, partial):
         with self.lock:
-            line = f"▶ {track_name}｜{partial}"
-            pad = " " * max(0, self.streams[track_name]._disp_len - len(line))
-            print("\r" + line + pad, end="", flush=True)
-            self.streams[track_name]._disp_len = len(line)
+            self.display.render_partial(track_name, partial)
 
     def clear_partial(self, track_name):
         with self.lock:
-            if self.streams[track_name]._disp_len:
-                print("\r\033[K", end="", flush=True)
-                self.streams[track_name]._disp_len = 0
+            self.display.clear_partial(track_name)
 
     def flush_all(self):
         for st in self.streams.values():

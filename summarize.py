@@ -62,7 +62,8 @@ def _clean_body(md_text):
     return "\n".join(lines).strip()
 
 
-def _call_qwen(transcript, cfg):
+def chat(system, user, cfg):
+    """调用 OpenAI 兼容接口，返回回复文本（供纪要与热词校正共用）"""
     url = cfg["api_base"].rstrip("/") + "/chat/completions"
     headers = {"Content-Type": "application/json"}
     if cfg.get("api_key"):
@@ -71,13 +72,17 @@ def _call_qwen(transcript, cfg):
         "model": cfg["model"],
         "temperature": cfg.get("temperature", 0.3),
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"会议转写文本如下：\n\n{transcript}"},
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
         ],
     }
     resp = requests.post(url, headers=headers, json=payload, timeout=120)
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"].strip()
+
+
+def _call_qwen(transcript, cfg):
+    return chat(SYSTEM_PROMPT, f"会议转写文本如下：\n\n{transcript}", cfg)
 
 
 def _mock_minutes(transcript):
