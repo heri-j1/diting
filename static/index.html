@@ -102,6 +102,12 @@
     <div class="frow"><label>api_base</label><input id="cfg-base" placeholder="https://xx/v1"></div>
     <div class="frow"><label>api_key</label><input id="cfg-key" type="password" placeholder="留空则不修改"></div>
     <div class="frow"><label>model</label><input id="cfg-model" placeholder="qwen-plus"></div>
+    <div class="frow"><label>接口格式</label>
+      <select id="cfg-format" style="background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px;">
+        <option value="openai">OpenAI (/chat/completions)</option>
+        <option value="anthropic">Anthropic (/v1/messages)</option>
+      </select>
+    </div>
     <button class="save" onclick="saveConfig()">保存接口配置</button>
   </details>
 </main>
@@ -191,7 +197,8 @@ function saveHotwords(){
 }
 function saveConfig(){
   fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({api_base:$('cfg-base').value, api_key:$('cfg-key').value, model:$('cfg-model').value})})
+    body:JSON.stringify({api_base:$('cfg-base').value, api_key:$('cfg-key').value,
+      model:$('cfg-model').value, api_format:$('cfg-format').value})})
     .then(()=>toast('接口配置已保存'));
 }
 
@@ -226,7 +233,8 @@ function connect(){
 fetch('/api/status').then(r=>r.json()).then(s=> setPhase(s.phase, s.detail, s.elapsed));
 fetch('/api/hotwords').then(r=>r.json()).then(d=> $('hotwords').value = d.text||'');
 fetch('/api/config').then(r=>r.json()).then(d=>{ $('cfg-base').value=d.api_base||'';
-  $('cfg-model').value=d.model||''; $('cfg-key').placeholder=d.api_key?'已设置(留空不修改)':'留空则不修改'; });
+  $('cfg-model').value=d.model||''; $('cfg-format').value=d.api_format||'openai';
+  $('cfg-key').placeholder=d.api_key?'已设置(留空不修改)':'留空则不修改'; });
 loadRecordings();
 connect();
 </script>

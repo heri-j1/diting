@@ -267,7 +267,7 @@ def api_config():
 def api_config_save(body: dict):
     import json as _json
     cfg = _json.loads((ROOT / "config.json").read_text(encoding="utf-8")) if (ROOT / "config.json").exists() else {}
-    for k in ("api_base", "model", "temperature", "max_chars"):
+    for k in ("api_base", "model", "temperature", "max_chars", "api_format", "max_tokens"):
         if k in body and body[k] != "":
             cfg[k] = body[k]
     key = body.get("api_key", "")

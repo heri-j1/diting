@@ -27,8 +27,10 @@ DEFAULT_CONFIG = {
     "api_base": "",     # 留空走模拟模式
     "api_key": "",
     "model": "qwen-plus",
+    "api_format": "openai",  # openai(/v1/chat/completions) | anthropic(/v1/messages)
     "temperature": 0.3,
     "max_chars": 12000,  # 送入模型的转写字数上限
+    "max_tokens": 4096,  # 回复长度上限（Anthropic 格式必填）
 }
 
 SYSTEM_PROMPT = (
@@ -63,7 +65,31 @@ def _clean_body(md_text):
 
 
 def chat(system, user, cfg):
-    """调用 OpenAI 兼容接口，返回回复文本（供纪要与热词校正共用）"""
+    """按 api_format 调用大模型接口（OpenAI 兼容 / Anthropic Messages），返回回复文本"""
+    fmt = (cfg.get("api_format") or "openai").lower()
+    if fmt == "anthropic":
+        url = cfg["api_base"].rstrip("/") + "/messages"
+        headers = {
+            "x-api-key": cfg.get("api_key", ""),
+            # 部分网关（如 new-api）按 Bearer 鉴权，双头兼容标准 Anthropic API
+            "Authorization": f"Bearer {cfg.get('api_key', '')}",
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": cfg["model"],
+            "max_tokens": int(cfg.get("max_tokens", 4096)),
+            "temperature": cfg.get("temperature", 0.3),
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        }
+        resp = requests.post(url, headers=headers, json=payload, timeout=180)
+        resp.raise_for_status()
+        data = resp.json()
+        parts = [c.get("text", "") for c in data.get("content", []) if c.get("type") == "text"]
+        return "\n".join(parts).strip()
+
+    # OpenAI 兼容（默认）
     url = cfg["api_base"].rstrip("/") + "/chat/completions"
     headers = {"Content-Type": "application/json"}
     if cfg.get("api_key"):
@@ -76,7 +102,7 @@ def chat(system, user, cfg):
             {"role": "user", "content": user},
         ],
     }
-    resp = requests.post(url, headers=headers, json=payload, timeout=120)
+    resp = requests.post(url, headers=headers, json=payload, timeout=180)
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"].strip()
 

@@ -2,6 +2,8 @@
   "api_base": "",
   "api_key": "",
   "model": "qwen-plus",
+  "api_format": "openai",
   "temperature": 0.3,
-  "max_chars": 12000
+  "max_chars": 12000,
+  "max_tokens": 4096
 }
