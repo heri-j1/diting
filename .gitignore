@@ -1,0 +1,16 @@
+# 虚拟环境 / 缓存
+.venv/
+__pycache__/
+*.pyc
+
+# 本地数据（录音含隐私，模型体积大且可重下）
+recordings/
+models/
+testdata/
+
+# 本机配置（可能含 api_key，提交 config.example.json 代替）
+config.json
+
+# 杂项
+*.log
+.zcodeignore

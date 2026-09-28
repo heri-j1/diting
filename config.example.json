@@ -1,0 +1,7 @@
+{
+  "api_base": "",
+  "api_key": "",
+  "model": "qwen-plus",
+  "temperature": 0.3,
+  "max_chars": 12000
+}

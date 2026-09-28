@@ -1,0 +1,11 @@
+# 本机 CPU 转写路线（torch 被 Windows 智能应用控制拦截，故用 onnxruntime）
+# 注: numpy/scipy 需为兼容 numpy<2 的版本（funasr_onnx 要求）
+numpy==1.26.4
+scipy==1.13.1
+onnxruntime
+funasr-onnx
+kaldi-native-fbank
+librosa
+PyAudioWPatch
+soundfile
+requests
