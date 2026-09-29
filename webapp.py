@@ -7,15 +7,17 @@
 """
 import asyncio
 import datetime
+import json
 import re
 import shutil
+import socket
 import threading
 import time
 import webbrowser
 from pathlib import Path
 
 import pyaudiowpatch as pyaudio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
 from capture import Track, find_loopback_device
@@ -23,9 +25,86 @@ from capture import Track, find_loopback_device
 ROOT = Path(__file__).parent
 RECORDINGS = ROOT / "recordings"
 ARCHIVE = RECORDINGS / "archive"
-HOST, PORT = "127.0.0.1", 8321
+PORT = 8321
+CONFIG_PATH = ROOT / "config.json"
+
+
+def _load_web_config() -> dict:
+    try:
+        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _lan_ips() -> set:
+    """本机所有网卡的 IPv4（这些来源视为可信的本机）"""
+    ips = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(info[4][0])
+    except OSError:
+        pass
+    return ips
+
+
+def _bind_host() -> str:
+    return "0.0.0.0" if _load_web_config().get("lan_access") else "127.0.0.1"
+
+
+HOST = _bind_host()  # 兼容旧引用；实际监听以启动时为准
 
 app = FastAPI(title="谛听 Diting")
+
+# ---------- 信任栅栏（借鉴 DSH 小鲸鱼 widget） ----------
+# 读操作(看字幕/文稿)可开放局域网；所有写操作仅限本机来源(loopback/本机网卡)或 admin_hosts 白名单；
+# 带 Origin 的请求校验同源，拦截恶意网页驱动浏览器打内网接口(含 DNS rebinding)。
+
+SAFE_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _trust_fence(request: Request):
+    """写操作依赖：来源必须是本机(loopback/本机网卡 IP/admin_hosts)且 Origin 同源"""
+    cfg = _load_web_config()
+    client = request.client.host if request.client else ""
+    trusted = set(SAFE_HOSTS) | _lan_ips() | set(cfg.get("admin_hosts", []))
+    if client not in trusted:
+        raise HTTPException(status_code=403, detail=f"写操作仅限本机（来源 {client} 不在白名单）")
+    _check_origin(request, cfg)
+
+
+def _origin_host(origin: str) -> str:
+    from urllib.parse import urlparse
+    try:
+        return (urlparse(origin).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _check_origin(request: Request, cfg: dict):
+    """浏览器会带 Origin 头；必须与 Host 同源或来自本机/白名单，否则拒绝"""
+    origin = request.headers.get("origin")
+    if not origin:
+        return  # 非浏览器客户端（curl/CLI）不带 Origin，放行
+    host = (request.headers.get("host", "") or "").rsplit(":", 1)[0].lower()
+    oh = _origin_host(origin)
+    allowed = oh in ({h.lower() for h in SAFE_HOSTS} | _lan_ips() | {h.lower() for h in cfg.get("admin_hosts", [])}) \
+        or oh == host
+    if not allowed:
+        raise HTTPException(status_code=403, detail=f"跨站 Origin 被拒绝: {origin}")
+
+
+require_local = Depends(_trust_fence)
+
+
+@app.middleware("http")
+async def fence_origin_middleware(request: Request, call_next):
+    """全站 Origin 校验（含读请求，防恶意网页探测内网）；WebSocket 握手另行校验"""
+    if request.url.path.startswith(("/api", "/ws")):
+        try:
+            _check_origin(request, _load_web_config())
+        except HTTPException as e:
+            return JSONResponse({"error": e.detail}, status_code=403)
+    return await call_next(request)  # starlette 1.x 需显式传 request
 
 # ---------- 全局会话状态（单用户本地应用，一把锁够用） ----------
 lock = threading.Lock()
@@ -214,7 +293,7 @@ def api_status():
     return s
 
 
-@app.post("/api/start")
+@app.post("/api/start", dependencies=[require_local])
 def api_start():
     try:
         info = start_session()
@@ -223,7 +302,7 @@ def api_start():
         return JSONResponse({"ok": False, "error": str(e)}, status_code=409)
 
 
-@app.post("/api/stop")
+@app.post("/api/stop", dependencies=[require_local])
 def api_stop():
     try:
         stop_session()
@@ -237,7 +316,7 @@ def api_recordings(view: str = "active"):
     return list_recordings(view)
 
 
-@app.post("/api/archive")
+@app.post("/api/archive", dependencies=[require_local])
 def api_archive(body: dict):
     """归档/还原：会话全部产物（文稿+录音+docx）在 recordings/ 与 recordings/archive/ 间整体搬移"""
     try:
@@ -256,7 +335,7 @@ def api_archive(body: dict):
     return {"ok": True, "moved": len(files)}
 
 
-@app.post("/api/delete")
+@app.post("/api/delete", dependencies=[require_local])
 def api_delete(body: dict):
     """永久删除某次会话的全部产物（录音含隐私，不可恢复）"""
     try:
@@ -313,7 +392,7 @@ def api_hotwords():
     return {"text": p.read_text(encoding="utf-8") if p.exists() else ""}
 
 
-@app.post("/api/hotwords")
+@app.post("/api/hotwords", dependencies=[require_local])
 def api_hotwords_save(body: dict):
     (ROOT / "hotwords.txt").write_text(body.get("text", ""), encoding="utf-8")
     return {"ok": True}
@@ -328,11 +407,12 @@ def api_config():
     return cfg
 
 
-@app.post("/api/config")
+@app.post("/api/config", dependencies=[require_local])
 def api_config_save(body: dict):
     import json as _json
     cfg = _json.loads((ROOT / "config.json").read_text(encoding="utf-8")) if (ROOT / "config.json").exists() else {}
-    for k in ("api_base", "model", "temperature", "max_chars", "api_format", "max_tokens"):
+    for k in ("api_base", "model", "temperature", "max_chars", "api_format", "max_tokens",
+              "lan_access", "admin_hosts"):
         if k in body and body[k] != "":
             cfg[k] = body[k]
     key = body.get("api_key", "")
@@ -346,6 +426,11 @@ def api_config_save(body: dict):
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     global _loop
+    try:
+        _check_origin(ws, _load_web_config())  # WebSocket 握手同受信任栅栏
+    except HTTPException as e:
+        await ws.close(code=1008, reason=e.detail)
+        return
     _loop = asyncio.get_running_loop()
     await ws.accept()
     clients.add(ws)
@@ -364,14 +449,14 @@ async def ws_endpoint(ws: WebSocket):
 
 def _open_browser():
     time.sleep(1.5)
-    webbrowser.open(f"http://{HOST}:{PORT}")
+    webbrowser.open(f"http://127.0.0.1:{PORT}")
 
 
 def _port_busy() -> bool:
     import socket
     s = socket.socket()
     try:
-        s.bind((HOST, PORT))
+        s.bind(("127.0.0.1", PORT))
         s.close()
         return False
     except OSError:
@@ -379,10 +464,13 @@ def _port_busy() -> bool:
 
 
 if __name__ == "__main__":
+    bind = _bind_host()  # config.json -> lan_access: true 时监听 0.0.0.0（局域网可看）
     if _port_busy():
-        print(f"[Diting] already running at http://{HOST}:{PORT}, opening browser")
-        webbrowser.open(f"http://{HOST}:{PORT}")
+        print(f"[Diting] already running at http://127.0.0.1:{PORT}, opening browser")
+        webbrowser.open(f"http://127.0.0.1:{PORT}")
     else:
+        if bind == "0.0.0.0":
+            print("[Diting] LAN access ON —— 局域网可看实时字幕/文稿；写操作仍仅限本机/白名单（信任栅栏）")
         threading.Thread(target=_open_browser, daemon=True).start()
         import uvicorn
-        uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
+        uvicorn.run(app, host=bind, port=PORT, log_level="warning")
