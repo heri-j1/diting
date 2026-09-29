@@ -80,6 +80,7 @@
       <span id="elapsed">00:00</span>
       <div id="detail" style="color:var(--dim);font-size:12px;margin-top:4px;"></div>
     </div>
+    <button class="save" id="btnQr" style="margin-left:auto;" onclick="openQr()">📱 手机查看</button>
     <div class="levels">
       <div class="lv">系统 <div class="bar"><i id="lv-sys"></i></div></div>
       <div class="lv">麦克风 <div class="bar"><i id="lv-mic"></i></div></div>
@@ -132,6 +133,25 @@
   </details>
 </main>
 <div id="toast" class="toast"></div>
+<div id="qrModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;" onclick="closeQr(event)">
+  <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;max-width:420px;margin:8vh auto;padding:20px 22px;color:var(--fg);"
+       onclick="event.stopPropagation()">
+    <div class="row" style="justify-content:space-between;">
+      <b>📱 手机扫码查看</b>
+      <a href="javascript:closeQr()" style="color:var(--dim);text-decoration:none;font-size:18px;">✕</a>
+    </div>
+    <div id="qrStatus" style="color:var(--dim);font-size:13px;margin:8px 0;">加载中…</div>
+    <div id="qrBox" style="background:#fff;border-radius:12px;padding:10px;width:240px;margin:10px auto;text-align:center;">
+      <img id="qrImg" alt="二维码" style="width:220px;height:220px;display:block;">
+    </div>
+    <div id="qrUrl" style="font-size:14px;color:var(--blue);text-align:center;word-break:break-all;margin:6px 0 10px;"></div>
+    <div class="row" style="justify-content:center;gap:10px;">
+      <button class="save" onclick="refreshQr()">刷新二维码</button>
+      <button class="save" style="background:var(--card2);color:var(--fg);" onclick="copyLink()">复制链接</button>
+    </div>
+    <div id="qrLan" style="margin-top:12px;font-size:13px;color:var(--dim);"></div>
+  </div>
+</div>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -256,6 +276,57 @@ function saveConfig(){
       model:$('cfg-model').value, api_format:$('cfg-format').value})})
     .then(()=>toast('接口配置已保存'));
 }
+let qrTimer = null;
+function openQr(){
+  $('qrModal').style.display = 'block';
+  refreshQr();
+  qrTimer = setInterval(pollLan, 3000);
+  pollLan();
+}
+function closeQr(e){
+  if (e && e.target && e.target.id !== 'qrModal' && e.target.textContent !== '✕') return;
+  $('qrModal').style.display = 'none';
+  clearInterval(qrTimer);
+}
+function refreshQr(){
+  $('qrImg').src = '/api/qr.svg?t=' + Date.now();
+  pollLan();
+}
+function copyLink(){
+  const url = $('qrUrl').textContent;
+  (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+    .then(()=>toast('链接已复制')).catch(()=>{});
+}
+function pollLan(){
+  fetch('/api/qr-info').then(r=>r.json()).then(d=>{
+    $('qrUrl').textContent = d.url || '';
+    if (!d.lan_on) {
+      $('qrStatus').innerHTML = '局域网访问未开启';
+      $('qrLan').innerHTML = '<button class="save" onclick="enableLan()">一键开启局域网并重启服务</button>' +
+        '<div style="margin-top:6px;">开启后手机连同一 WiFi 即可访问；写操作仍仅限本机。</div>';
+      $('qrBox').style.opacity = .25;
+      return;
+    }
+    $('qrBox').style.opacity = 1;
+    $('qrStatus').innerHTML = d.phone.fresh
+      ? '<span style="color:var(--green);">● 手机已连接</span>（' + (d.phone.ip||'') + '）'
+      : '等待手机连接… 用手机相机扫码，或在手机浏览器打开下方链接。';
+    $('qrLan').textContent = '局域网访问已开启（' + (d.ips||[]).join(' / ') + '）· 写操作仅限本机/白名单';
+  });
+}
+function enableLan(){
+  fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({lan_access:true})}).then(()=>{
+    toast('正在重启服务…');
+    fetch('/api/restart',{method:'POST'}).then(()=>{
+      $('qrStatus').textContent = '服务重启中，几秒后自动恢复…';
+      const wait = setInterval(()=>{
+        fetch('/api/status').then(r=>{ if(r.ok){ clearInterval(wait); location.reload(); } }).catch(()=>{});
+      }, 1500);
+    });
+  });
+}
+
 function saveFence(){
   const admins = $('cfg-admin').value.split(/[,，\s]+/).filter(x=>x);
   fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},

@@ -6,6 +6,7 @@
              hotwords(热词) / summarize(纪要)。本文件只做会话编排与通信。
 """
 import asyncio
+import os
 import datetime
 import json
 import re
@@ -17,7 +18,7 @@ import webbrowser
 from pathlib import Path
 
 import pyaudiowpatch as pyaudio
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
 from capture import Track, find_loopback_device
@@ -104,6 +105,10 @@ async def fence_origin_middleware(request: Request, call_next):
             _check_origin(request, _load_web_config())
         except HTTPException as e:
             return JSONResponse({"error": e.detail}, status_code=403)
+        client = request.client.host if request.client else ""
+        if client not in set(SAFE_HOSTS) | _lan_ips():  # 记录局域网访客（扫码连接状态）
+            _lan_seen.clear()
+            _lan_seen.update({"ip": client, "time": time.time(), "ua": request.headers.get("user-agent", "")[:60]})
     return await call_next(request)  # starlette 1.x 需显式传 request
 
 # ---------- 全局会话状态（单用户本地应用，一把锁够用） ----------
@@ -118,6 +123,7 @@ state = {
 session = {}  # 录音会话资源: tracks/live/paudio/loopback_wav/mic_wav
 clients = set()  # 已连接的 WebSocket
 _loop = None  # asyncio 主循环（线程安全广播用）
+_lan_seen = {}  # 最近一次局域网访客 {ip, time, ua}
 
 
 def broadcast(msg: dict):
@@ -405,6 +411,55 @@ def api_config():
     cfg = _json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
     cfg["api_key"] = "******" if cfg.get("api_key") else ""
     return cfg
+
+
+def _qr_svg(data: str) -> str:
+    import io
+
+    import qrcode
+    import qrcode.image.svg
+
+    img = qrcode.make(data, image_factory=qrcode.image.svg.SvgPathImage, box_size=10, border=2)
+    buf = io.BytesIO()
+    img.save(buf)
+    return buf.getvalue().decode("utf-8")
+
+
+def _lan_url() -> str:
+    ips = sorted(_lan_ips())
+    return f"http://{ips[0]}:{PORT}" if ips else f"http://127.0.0.1:{PORT}"
+
+
+@app.get("/api/qr-info")
+def api_qr_info():
+    cfg = _load_web_config()
+    lan_on = bool(cfg.get("lan_access"))
+    seen = dict(_lan_seen)
+    seen["fresh"] = time.time() - seen.get("time", 0) < 60 if seen else False
+    return {"lan_on": lan_on, "url": _lan_url() if lan_on else "", "ips": sorted(_lan_ips()),
+            "phone": {"ip": seen.get("ip", ""), "fresh": seen.get("fresh", False), "ua": seen.get("ua", "")}}
+
+
+@app.get("/api/qr.svg", response_class=FileResponse)
+def api_qr_svg():
+    return Response(content=_qr_svg(_lan_url()), media_type="image/svg+xml")
+
+
+@app.post("/api/restart", dependencies=[require_local])
+def api_restart():
+    """重启服务（局域网开关等需要重启的配置生效）；新进程脱离当前会话运行"""
+    import subprocess
+    import sys
+
+    flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen([sys.executable, str(ROOT / "webapp.py")], cwd=str(ROOT),
+                     creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _die():
+        time.sleep(0.8)
+        os._exit(0)
+    threading.Thread(target=_die, daemon=True).start()
+    return {"ok": True, "msg": "服务正在重启，页面将自动重连"}
 
 
 @app.post("/api/config", dependencies=[require_local])
