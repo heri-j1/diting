@@ -147,20 +147,20 @@ class WindowDisplay:
             self.stop_btn.pack(pady=(0, 8), after=self.part_lbl)
 
     def _snap_check(self):
-        """松手时距屏幕左右边缘 < EDGE_SNAP 则吸附贴边，文字镜像对齐"""
+        """松手时：先钳制回屏幕内（拖不丢），再判断左右边缘吸附（贴边后文字镜像对齐）"""
         root = self._root
-        sw = root.winfo_screenwidth()
-        x = root.winfo_x()
-        y = root.winfo_y()
-        w = root.winfo_width()
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        x, y = root.winfo_x(), root.winfo_y()
+        w, h = root.winfo_width(), root.winfo_height()
+        x = min(max(x, 0), sw - w)   # 拖出屏幕外也要拉回来
+        y = min(max(y, 0), sh - h)
         if x <= EDGE_SNAP:
-            self._snapped, nx, anchor, just = "left", 0, "w", "left"
+            self._snapped, x, anchor, just = "left", 0, "w", "left"
         elif x + w >= sw - EDGE_SNAP:
-            self._snapped, nx, anchor, just = "right", sw - w, "e", "right"
+            self._snapped, x, anchor, just = "right", sw - w, "e", "right"
         else:
             self._snapped, anchor, just = None, "w", "left"
-            return
-        root.geometry(f"+{nx}+{y}")
+        root.geometry(f"+{x}+{y}")
         for lbl in (self.final_lbl, self.part_lbl):
             lbl.config(anchor=anchor, justify=just)
 
